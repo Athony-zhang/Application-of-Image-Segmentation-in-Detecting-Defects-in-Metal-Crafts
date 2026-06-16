@@ -11,3 +11,5 @@ This algorithm develops a comprehensive detection workflow. First, image preproc
 The experimental results show that the optimized algorithm can effectively highlight and distinguish black spot defects on the surface of aluminum sheets, significantly reducing both the false-positive rate (such as misidentification of metal edges) and the miss-rate. This algorithm exhibits excellent robustness and “template” characteristics; by adjusting the corresponding parameters, it can be adapted to meet detection requirements for various material crafts and defect types, making it highly valuable for industrial applications. 
 
 Keywords: image segmentation; defect detection; histogram equalization; split-and-merge algorithm; Gaussian filtering; industrial inspection
+
+PS:The data used is derived from https://aistudio.baidu.com/dataset/detail/358814/file
