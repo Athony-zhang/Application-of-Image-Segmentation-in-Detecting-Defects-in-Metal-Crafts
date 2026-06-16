@@ -1,218 +1,220 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
 
-# C extensions
-*.so
+# Read image
+image_path = "D:/Code/Image/Defect/2/147.jpg"
+img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Histogram equalization
+img_eq = cv2.equalizeHist(img)
 
-# PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Gaussian blur for denoising
+img_denoised = cv2.GaussianBlur(img_eq, (5, 5), sigmaX=1.0)
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Display comparison of results
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+axes[0].imshow(img, cmap='gray')
+axes[0].set_title('Original Image')
+axes[1].imshow(img_eq, cmap='gray')
+axes[1].set_title('After Histogram Equalization')
+axes[2].imshow(img_denoised, cmap='gray')
+axes[2].set_title('After Gaussian Denoising')
+plt.tight_layout()
+plt.show()
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
+# Illumination correction
+kernel_size = (151, 151)
+background = cv2.GaussianBlur(img_denoised, kernel_size, sigmaX=0)
 
-# Translations
-*.mo
-*.pot
+mean_bg = np.mean(background)
+img_corrected = cv2.addWeighted(src1=img_denoised, alpha=1.0,
+                                src2=background, beta=-1.0,
+                                gamma=mean_bg)
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+img_corrected = cv2.normalize(img_corrected, None, 
+                              alpha=0, beta=255, 
+                              norm_type=cv2.NORM_MINMAX)
+img_corrected = img_corrected.astype(np.uint8)
 
-# Flask stuff:
-instance/
-.webassets-cache
+# Display illumination correction comparison
+plt.figure(figsize=(15, 5))
+plt.subplot(1, 3, 1)
+plt.imshow(img, cmap='gray')
+plt.title('Original Image')
+plt.axis('off')
 
-# Scrapy stuff:
-.scrapy
+plt.subplot(1, 3, 2)
+plt.imshow(background, cmap='gray')
+plt.title('Estimated Background')
+plt.axis('off')
 
-# Sphinx documentation
-docs/_build/
+plt.subplot(1, 3, 3)
+plt.imshow(img_corrected, cmap='gray')
+plt.title('Corrected Image')
+plt.axis('off')
 
-# PyBuilder
-.pybuilder/
-target/
+plt.tight_layout()
+plt.show()
 
-# Jupyter Notebook
-.ipynb_checkpoints
+# Save the corrected image
+cv2.imwrite('corrected_image.png', img_corrected)
 
-# IPython
-profile_default/
-ipython_config.py
+# Core functions for split-and-merge segmentation
+def split_image(image, x, y, w, h, threshold, regions):
+    sub_img = image[y:y+h, x:x+w]
+    var = np.var(sub_img)
+    mean = np.mean(sub_img)
+    
+    if (w <= 6 or h <= 6) or (var < threshold):
+        regions.append((x, y, w, h, mean, var))
+        return
+    
+    w2, h2 = w//2, h//2
+    split_image(image, x, y, w2, h2, threshold, regions)
+    split_image(image, x+w2, y, w - w2, h2, threshold, regions)
+    split_image(image, x, y+h2, w2, h - h2, threshold, regions)
+    split_image(image, x+w2, y+h2, w - w2, h - h2, threshold, regions)
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-# Pipfile.lock
+def merge_regions(image, regions, diff_threshold):
+    merged = []
+    used = [False] * len(regions)
+    
+    for i in range(len(regions)):
+        if used[i]:
+            continue
+        x1, y1, w1, h1, m1, v1 = regions[i]
+        current = [i]
+        
+        for j in range(i+1, len(regions)):
+            if used[j]:
+                continue
+            x2, y2, w2, h2, m2, v2 = regions[j]
+            
+            is_adjacent = (
+                (x1 + w1 == x2 or x2 + w2 == x1) and 
+                (y1 < y2 + h2 and y2 < y1 + h1)
+            ) or (
+                (y1 + h1 == y2 or y2 + h2 == y1) and 
+                (x1 < x2 + w2 and x2 < x1 + w1)
+            )
+            
+            if is_adjacent and abs(m1 - m2) < diff_threshold:
+                current.append(j)
+                m1 = (m1 * (w1*h1) + m2 * (w2*h2)) / (w1*h1 + w2*h2)
+                w1 = max(x1 + w1, x2 + w2) - min(x1, x2)
+                h1 = max(y1 + h1, y2 + h2) - min(y1, y2)
+                x1 = min(x1, x2)
+                y1 = min(y1, y2)
+        
+        for idx in current:
+            used[idx] = True
+        merged.append((x1, y1, w1, h1, m1))
+    
+    return merged
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-# poetry.lock
-# poetry.toml
+def segment_with_split_merge(image, split_threshold=250, merge_threshold=85):
+    h, w = image.shape
+    regions = []
+    split_image(image, 0, 0, w, h, split_threshold, regions)
+    merged_regions = merge_regions(image, regions, merge_threshold)
+    return merged_regions
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-# pdm.lock
-# pdm.toml
-.pdm-python
-.pdm-build/
+# Merge bounding boxes based on distance (to resolve duplicate detections)
+def merge_boxes_by_distance(boxes, distance_thresh=50):
+    if not boxes:
+        return []
+    
+    # Calculate the center coordinates of each box
+    centers = []
+    for (x, y, w, h, mean) in boxes:
+        cx = x + w / 2
+        cy = y + h / 2
+        centers.append((cx, cy, x, y, w, h, mean))
+    
+    # Clustering (group boxes with center distance below the threshold)
+    clusters = []
+    used = [False] * len(centers)
+    
+    for i in range(len(centers)):
+        if used[i]:
+            continue
+        cx1, cy1, x1, y1, w1, h1, m1 = centers[i]
+        cluster = [(x1, y1, w1, h1, m1)]
+        used[i] = True
+        
+        for j in range(len(centers)):
+            if used[j]:
+                continue
+            cx2, cy2, x2, y2, w2, h2, m2 = centers[j]
+            # Calculate center distance
+            dist = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
+            if dist < distance_thresh:
+                cluster.append((x2, y2, w2, h2, m2))
+                used[j] = True
+        
+        # For boxes in the same cluster, find the minimum bounding rectangle
+        xs = []
+        ys = []
+        for (x, y, w, h, mean) in cluster:
+            xs.append(x)
+            xs.append(x + w)
+            ys.append(y)
+            ys.append(y + h)
+        min_x = min(xs)
+        max_x = max(xs)
+        min_y = min(ys)
+        max_y = max(ys)
+        merged_w = max_x - min_x
+        merged_h = max_y - min_y
+        # Use the mean of the first box in the cluster as the merged mean
+        merged_mean = cluster[0][4]
+        clusters.append((min_x, min_y, merged_w, merged_h, merged_mean))
+    
+    return clusters
 
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-# pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
+# Execute split-and-merge segmentation
+merged_regions = segment_with_split_merge(img_corrected, split_threshold=255, merge_threshold=85)
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+aluminum_mean = np.mean(img_corrected)
+print(f"Average grayscale value of the aluminum sheet: {aluminum_mean:.2f}")
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+defect_regions = []
+min_defect_area = 500
+gray_thresh = 40
 
-# Redis
-*.rdb
-*.aof
-*.pid
+for (x, y, w, h, mean) in merged_regions:
+    area = w * h
+    if mean < aluminum_mean - gray_thresh and area > min_defect_area:
+        defect_regions.append((x, y, w, h, mean))
 
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
+print(f"Initial number of detected defects: {len(defect_regions)}")
 
-# ActiveMQ
-activemq-data/
+defect_regions_merged = merge_boxes_by_distance(defect_regions, distance_thresh=60)
+print(f"Number of defects after merging: {len(defect_regions_merged)}")
 
-# SageMath parsed files
-*.sage.py
+# Visualization
+img_color = cv2.cvtColor(img_corrected, cv2.COLOR_GRAY2BGR)
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+for (x, y, w, h, mean) in defect_regions_merged:
+    cv2.rectangle(img_color, (int(x), int(y)), (int(x+w), int(y+h)), (0, 0, 255), 2)
+    cv2.putText(img_color, f"Defect", (int(x), int(y)-5), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1)
 
-# Spyder project settings
-.spyderproject
-.spyproject
+plt.figure(figsize=(12, 6))
+plt.subplot(1,2,1)
+plt.imshow(img, cmap='gray')
+plt.title("Original Image")
+plt.axis('off')
 
-# Rope project settings
-.ropeproject
+plt.subplot(1,2,2)
+plt.imshow(cv2.cvtColor(img_color, cv2.COLOR_BGR2RGB))
+plt.title("Detected Defects")
+plt.axis('off')
 
-# mkdocs documentation
-/site
+plt.tight_layout()
+plt.show()
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-# Temporary file for partial code execution
-tempCodeRunnerFile.py
-
-# Ruff stuff:
-.ruff_cache/
-
-# PyPI configuration file
-.pypirc
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
+cv2.imwrite("defect_detected.png", img_color)
